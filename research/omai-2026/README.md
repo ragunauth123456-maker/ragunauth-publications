@@ -43,7 +43,7 @@ for a definitive reconciliation.
 Source: https://omaigoldmines.com/omai-project/preliminary-economic-assessment/
 The source CSV transcribes Table 2. The 3,900 FCF entry is annotated above.
 Audited PDF SHA-256:
-22be751e84b6f3d496647e2276362752c494e09909c3533b5b13c1052ae257c8
+ab8a3752a7f4828dbdba59c9866daa1132112d488ca2558644dd1e3804510d65
 
 This folder does not contain the complete edited PDF or represent third-party
 engineering certification. The finished PDF and complete source archive were
