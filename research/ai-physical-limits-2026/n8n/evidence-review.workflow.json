@@ -1,0 +1,170 @@
+{
+  "name": "AI Physical Limits | Research Evidence Review (n8n)",
+  "nodes": [
+    {
+      "id": "f1b3550d-5b8b-4d73-8afd-5a90e5d4e101",
+      "name": "Manual review run",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -560,
+        -140
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "f1b3550d-5b8b-4d73-8afd-5a90e5d4e102",
+      "name": "Daily 07:30 Guyana",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -560,
+        80
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 7,
+              "triggerAtMinute": 30
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "f1b3550d-5b8b-4d73-8afd-5a90e5d4e103",
+      "name": "Define Source Queries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -280,
+        -40
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Crossref metadata is a discovery lead, never proof of a paper's factual claims.\nconst topics = [\n { topic: 'Data-centre electricity and grid demand', query: 'data centre electricity demand power grids' },\n { topic: 'Water use and cooling', query: 'data centre water consumption liquid cooling' },\n { topic: 'Critical minerals and supply chains', query: 'artificial intelligence data centres copper critical minerals supply chains' },\n { topic: 'Frontier AI and hypothetical superintelligence', query: 'frontier artificial intelligence compute scaling safety superintelligence' }\n];\nconst fromDate = (new Date().getUTCFullYear() - 1) + '-01-01';\nreturn topics.map(t => ({json: {\n  topic: t.topic,\n  url: 'https://api.crossref.org/works?query.bibliographic=' + encodeURIComponent(t.query) +\n    '&rows=8&sort=published&order=desc&filter=from-pub-date:' + fromDate +\n    '&select=DOI,title,publisher,published,URL,abstract,type',\n  review_state: 'metadata_search_only'\n}}));"
+      }
+    },
+    {
+      "id": "f1b3550d-5b8b-4d73-8afd-5a90e5d4e104",
+      "name": "Crossref metadata search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -20,
+        -40
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 25000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1200
+    },
+    {
+      "id": "f1b3550d-5b8b-4d73-8afd-5a90e5d4e105",
+      "name": "Normalize Research Leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        -40
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Treat HTTP responses and bibliographic fields as untrusted research leads.\nconst queries = $('Define Source Queries').all();\nconst seen = new Set();\nconst results = [];\nconst clean = v => String(v ?? '').replace(/<[^>]*>/g, ' ').replace(/[\\r\\n\\t]+/g, ' ').replace(/\\s+/g, ' ').trim();\nfor (let i = 0; i < $input.all().length; i++) {\n  const response = $input.all()[i].json;\n  const topic = queries[i]?.json?.topic || 'Unassigned research topic';\n  const entries = response?.message?.items;\n  if (!Array.isArray(entries)) continue;\n  for (const record of entries) {\n    const doi = clean(record.DOI).toLowerCase();\n    if (!/^10\\.\\d{4,9}\\/\\S+$/i.test(doi) || seen.has(doi)) continue;\n    seen.add(doi);\n    const dateParts = record.published?.['date-parts']?.[0];\n    const date = Array.isArray(dateParts) && Number.isInteger(dateParts[0])\n      ? [dateParts[0], String(dateParts[1] || 1).padStart(2,'0'), String(dateParts[2] || 1).padStart(2,'0')].join('-')\n      : 'date not supplied';\n    results.push({json:{\n      topic,\n      title: clean(record.title?.[0]).slice(0, 220) || 'Title not supplied',\n      doi,\n      doi_url: 'https://doi.org/' + encodeURI(doi),\n      publisher: clean(record.publisher).slice(0, 100),\n      published: date,\n      item_type: clean(record.type),\n      abstract_excerpt: clean(record.abstract).slice(0, 260),\n      retrieved_utc: new Date().toISOString(),\n      source: 'Crossref registration metadata',\n      review_status: 'UNVERIFIED - read and corroborate primary source before citation'\n    }});\n  }\n}\nreturn results.slice(0, 32);"
+      }
+    },
+    {
+      "id": "f1b3550d-5b8b-4d73-8afd-5a90e5d4e106",
+      "name": "Prepare Review Packet",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        -40
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const records = $input.all().map(i => i.json);\nconst generatedAt = new Date().toISOString();\nconst lines = [\n '# AI Physical Limits - Evidence Review Queue',\n 'Generated: ' + generatedAt,\n '',\n 'Status: HUMAN REVIEW REQUIRED. Crossref registration records are research leads, not independent verification.',\n 'Never revise the public white paper based solely on this packet.',\n '',\n 'Research leads: ' + records.length, ''\n];\nfor (const topic of [...new Set(records.map(r => r.topic))]) {\n  lines.push('## ' + topic, '');\n  for (const r of records.filter(x => x.topic === topic)) {\n    lines.push('- ' + r.title + ' (' + r.published + ')');\n    lines.push('  DOI: ' + r.doi_url);\n    lines.push('  Publisher: ' + (r.publisher || 'not supplied'));\n    lines.push('  Review: ' + r.review_status);\n  }\n  lines.push('');\n}\nlines.push('Editorial gate: retrieve and read original work, check methods, publication and event dates, population, uncertainties, corrections, competing evidence, and primary institutional releases. Record reviewer name, decision, version and access date before publication.');\nlines.push('Superintelligence: treat hypothetical AGI/ASI pathways as assumptions, never observed capabilities or dated predictions.');\nreturn [{json:{generated_utc: generatedAt, lead_count: records.length, approval_state:'awaiting_human_review', markdown:lines.join('\\n')}}];"
+      }
+    }
+  ],
+  "connections": {
+    "Manual review run": {
+      "main": [
+        [
+          {
+            "node": "Define Source Queries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily 07:30 Guyana": {
+      "main": [
+        [
+          {
+            "node": "Define Source Queries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Define Source Queries": {
+      "main": [
+        [
+          {
+            "node": "Crossref metadata search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crossref metadata search": {
+      "main": [
+        [
+          {
+            "node": "Normalize Research Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Research Leads": {
+      "main": [
+        [
+          {
+            "node": "Prepare Review Packet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Guyana",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "pinData": {},
+  "tags": [],
+  "id": "G4t6BX3o9pR7sY2u"
+}
